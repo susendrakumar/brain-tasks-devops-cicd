@@ -1,0 +1,40 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo Installing kubectl...
+      - curl -LO "https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl"
+      - chmod +x kubectl
+      - mv kubectl /usr/local/bin/kubectl
+
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 629845796500.dkr.ecr.ap-south-1.amazonaws.com
+      - REPOSITORY_URI=629845796500.dkr.ecr.ap-south-1.amazonaws.com/brain-tasks-app
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - echo Image tag is $IMAGE_TAG
+
+  build:
+    commands:
+      - echo Building Docker image...
+      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
+
+  post_build:
+    commands:
+      - echo Pushing Docker image to ECR...
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:latest
+
+      - echo Connecting to EKS...
+      - aws eks update-kubeconfig --region ap-south-1 --name brain-tasks-cluster
+
+      - echo Deploying application to Kubernetes...
+      - kubectl apply -f deployment.yaml
+      - kubectl apply -f service.yaml
+      - kubectl set image deployment/brain-tasks-deployment brain-tasks=$REPOSITORY_URI:$IMAGE_TAG
+      - kubectl rollout status deployment/brain-tasks-deployment --timeout=180s
+
+      - echo Deployment completed successfully
